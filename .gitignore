@@ -1,0 +1,9 @@
+node_modules/
+**/node_modules/
+.env
+**/.env
+coverage/
+dist/
+build/
+.vscode/
+.DS_Store
