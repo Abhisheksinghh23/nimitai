@@ -142,7 +142,6 @@ router.post("/analyse", async (req, res) => {
 router.get("/health", (_, res) => res.json({ status: "ok" }));
 
 app.use(router);
-app.use("/api", router);
 
 if (require.main === module) {
   app.listen(PORT, () => {
