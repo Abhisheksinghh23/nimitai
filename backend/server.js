@@ -122,7 +122,7 @@ router.post("/analyse", async (req, res) => {
     return res.status(200).json(parsed);
   } catch (err) {
     const message = err?.message || "Unknown Gemini error";
-    const shouldFallback = /401|403|404|incorrect api key|authentication|unauthorized/i.test(message);
+    const shouldFallback = /401|403|404|429|5\d\d|incorrect api key|authentication|unauthorized|high demand|temporarily|service unavailable|failed to fetch|network|timeout/i.test(message);
 
     if (shouldFallback) {
       console.warn("⚠️  Gemini request failed — falling back to mock response for demo.");
@@ -142,6 +142,7 @@ router.post("/analyse", async (req, res) => {
 router.get("/health", (_, res) => res.json({ status: "ok" }));
 
 app.use(router);
+app.use("/api", router);
 
 if (require.main === module) {
   app.listen(PORT, () => {
