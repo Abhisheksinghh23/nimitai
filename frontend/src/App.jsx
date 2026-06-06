@@ -55,6 +55,8 @@ export default function App() {
   const [error, setError]           = useState(null);
   const [isMock, setIsMock]         = useState(false);
 
+  const API_BASE = import.meta.env.VITE_API_URL || (typeof window !== "undefined" && window.location.hostname !== "localhost" ? "" : "http://localhost:5000");
+
   async function handleAnalyse() {
     if (!transcript.trim()) {
       setError("Please paste a transcript before analysing.");
@@ -66,7 +68,7 @@ export default function App() {
     setIsMock(false);
 
     try {
-      const res = await fetch("http://localhost:5000/analyse", {
+      const res = await fetch(`${API_BASE}/api/analyse`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ transcript }),

@@ -4,7 +4,8 @@ const cors = require("cors");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const app = express();
-const PORT = 5000;
+const router = express.Router();
+const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
@@ -65,7 +66,7 @@ ${transcript}`;
 }
 
 // ── POST /analyse ──────────────────────────────────────────────────────────
-app.post("/analyse", async (req, res) => {
+router.post("/analyse", async (req, res) => {
   const { transcript } = req.body;
 
   // Validate input
@@ -138,11 +139,18 @@ app.post("/analyse", async (req, res) => {
 });
 
 // ── Health check ───────────────────────────────────────────────────────────
-app.get("/health", (_, res) => res.json({ status: "ok" }));
+router.get("/health", (_, res) => res.json({ status: "ok" }));
 
-app.listen(PORT, () => {
-  console.log(`✅ Backend running at http://localhost:${PORT}`);
-  if (!process.env.GEMINI_API_KEY && !process.env.OPENAI_API_KEY) {
-    console.log("⚠️  No Gemini/OpenAI API key found — mock mode active.");
-  }
-});
+app.use(router);
+app.use("/api", router);
+
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`✅ Backend running at http://localhost:${PORT}`);
+    if (!process.env.GEMINI_API_KEY && !process.env.OPENAI_API_KEY) {
+      console.log("⚠️  No Gemini/OpenAI API key found — mock mode active.");
+    }
+  });
+}
+
+module.exports = app;
