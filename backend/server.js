@@ -10,26 +10,64 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// ── Mock fallback for demo/testing when no API key is set ──────────────────
-const MOCK_RESPONSE = {
-  signals: [
-    {
-      type: "pricing_concern",
-      quote: "That seems steep.",
-      tip: "Reframe cost as ROI — show the payback period immediately.",
-    },
-    {
-      type: "competitor_mention",
-      quote: "We pay under $200 currently.",
-      tip: "Ask what's included at that price and highlight your differentiators.",
-    },
-    {
-      type: "next_step",
-      quote: "Send me a pricing deck and I'll get back to you.",
-      tip: "Confirm a specific follow-up date when you send the deck.",
-    },
-  ],
+// ── Free fallback for demo/testing when no API key is set ─────────────────
+const FREE_SIGNAL_TIPS = {
+  buying_interest: "Acknowledge the interest and ask what outcome they want to achieve next.",
+  objection: "Validate the concern and clarify exactly what is blocking the decision.",
+  confusion: "Slow down and explain the key point in simpler terms.",
+  pricing_concern: "Reframe the cost discussion around ROI, value, and what they get for the price.",
+  competitor_mention: "Ask what they currently get from that alternative and compare your differentiators.",
+  next_step: "Confirm the next action, owner, and timing so momentum continues.",
+  hesitation: "Ask a short question to uncover what is still uncertain.",
 };
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function analyzeTranscriptFree(transcript) {
+  const sentences = String(transcript)
+    .split(/[.!?\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const rules = [
+    { type: "pricing_concern", keywords: ["price", "cost", "expensive", "cheap", "budget", "under $", "steep", "too high"] },
+    { type: "competitor_mention", keywords: ["competitor", "alternative", "other tool", "already have", "vs ", "versus", "current tool", "existing tool"] },
+    { type: "next_step", keywords: ["send me", "follow up", "next step", "schedule", "book", "review", "meet", "let's", "can you"] },
+    { type: "buying_interest", keywords: ["interesting", "sounds good", "that works", "real fit", "happy", "exploring options"] },
+    { type: "objection", keywords: ["concern", "issue", "problem", "worry", "objection", "but", "however"] },
+    { type: "confusion", keywords: ["what exactly", "what does", "not sure", "unclear", "confused"] },
+    { type: "hesitation", keywords: ["maybe", "i suppose", "hmm", "honestly"] },
+  ];
+
+  const signals = [];
+
+  for (const sentence of sentences) {
+    const lower = sentence.toLowerCase();
+    for (const rule of rules) {
+      const matches = rule.keywords.some((k) => {
+        if (/^[\w\-]+$/.test(k)) {
+          const pattern = new RegExp(`\\b${escapeRegExp(k)}\\b`, "i");
+          return pattern.test(lower);
+        }
+        return lower.includes(k);
+      });
+
+      if (matches) {
+        if (!signals.some((item) => item.quote === sentence && item.type === rule.type)) {
+          signals.push({
+            type: rule.type,
+            quote: sentence,
+            tip: FREE_SIGNAL_TIPS[rule.type] || "Keep the conversation focused on value and the next step.",
+          });
+        }
+      }
+    }
+  }
+
+  return { signals };
+}
 
 // ── System prompt for the LLM ──────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are a sales call analyst. Analyze the meeting transcript and identify important sales signals. Return ONLY valid JSON. Do not include markdown, explanations, or extra text.`;
@@ -152,11 +190,11 @@ router.post("/analyse", async (req, res) => {
     }
 
     if (!parsed) {
-      console.warn("⚠️  No AI API key configured — returning mock response for demo.");
+      parsed = analyzeTranscriptFree(transcript);
       return res.status(200).json({
-        ...MOCK_RESPONSE,
+        ...parsed,
         _mock: true,
-        warning: "Demo mode: add OPENAI_API_KEY or GEMINI_API_KEY to enable real analysis.",
+        warning: "Free analysis mode: using local signal detection because no AI key is configured.",
       });
     }
 
@@ -164,7 +202,7 @@ router.post("/analyse", async (req, res) => {
     if (!Array.isArray(parsed?.signals)) {
       return res.status(502).json({
         error: "AI response was missing the expected `signals` array.",
-        raw: rawContent,
+        raw: parsed,
       });
     }
 
@@ -174,11 +212,12 @@ router.post("/analyse", async (req, res) => {
     const shouldFallback = /401|403|404|429|5\d\d|incorrect api key|authentication|unauthorized|high demand|temporarily|service unavailable|failed to fetch|network|timeout/i.test(message);
 
     if (shouldFallback) {
-      console.warn("⚠️  AI request failed — falling back to mock response for demo.");
+      const parsed = analyzeTranscriptFree(transcript);
+      console.warn("⚠️  AI request failed — falling back to free local analysis.");
       return res.status(200).json({
-        ...MOCK_RESPONSE,
+        ...parsed,
         _mock: true,
-        warning: "Demo mode: AI request failed; showing mock signals.",
+        warning: "Free analysis mode: AI request failed; using local signal detection instead.",
       });
     }
 
