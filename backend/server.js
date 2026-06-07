@@ -65,6 +65,64 @@ Transcript:
 ${transcript}`;
 }
 
+function parseAiJson(rawContent) {
+  const cleaned = String(rawContent || "").replace(/```json|```/gi, "").trim();
+  return JSON.parse(cleaned);
+}
+
+async function callOpenAI(transcript) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is not configured.");
+  }
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      temperature: 0.2,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: buildUserPrompt(transcript) },
+      ],
+    }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    const message = data?.error?.message || `OpenAI request failed with status ${response.status}`;
+    throw new Error(message);
+  }
+
+  const rawContent = data?.choices?.[0]?.message?.content || "";
+  return parseAiJson(rawContent);
+}
+
+async function callGemini(transcript) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not configured.");
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash",
+    systemInstruction: SYSTEM_PROMPT,
+  });
+
+  const result = await model.generateContent({
+    contents: [{ role: "user", parts: [{ text: buildUserPrompt(transcript) }] }],
+    generationConfig: { temperature: 0.2 },
+  });
+
+  const rawContent = result.response?.text?.() || "";
+  return parseAiJson(rawContent);
+}
+
 // ── POST /analyse ──────────────────────────────────────────────────────────
 router.post("/analyse", async (req, res) => {
   const { transcript } = req.body;
@@ -74,40 +132,31 @@ router.post("/analyse", async (req, res) => {
     return res.status(400).json({ error: "Transcript is required and must be a non-empty string." });
   }
 
-  const geminiKey = process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY;
-
-  // If no API key is configured, return mock data with a warning.
-  if (!geminiKey) {
-    console.warn("⚠️  GEMINI_API_KEY not set — returning mock response for demo.");
-    return res.status(200).json({ ...MOCK_RESPONSE, _mock: true, warning: "Demo mode: Gemini API key is not configured." });
-  }
-
   try {
-    const genAI = new GoogleGenerativeAI(geminiKey);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
-      systemInstruction: SYSTEM_PROMPT,
-    });
-
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: buildUserPrompt(transcript) }] }],
-      generationConfig: { temperature: 0.2 },
-    });
-
-    const rawContent = result.response?.text?.() || "";
-
-    // Safely parse the JSON returned by the LLM
     let parsed;
-    try {
-      // Strip any accidental markdown fences just in case
-      const cleaned = rawContent.replace(/```json|```/gi, "").trim();
-      parsed = JSON.parse(cleaned);
-    } catch {
-      console.warn("⚠️  Gemini returned invalid JSON — falling back to mock response for demo.");
+
+    if (process.env.OPENAI_API_KEY) {
+      try {
+        parsed = await callOpenAI(transcript);
+      } catch (err) {
+        console.warn("⚠️  OpenAI request failed — trying Gemini fallback.", err.message);
+      }
+    }
+
+    if (!parsed && process.env.GEMINI_API_KEY) {
+      try {
+        parsed = await callGemini(transcript);
+      } catch (err) {
+        console.warn("⚠️  Gemini request failed — falling back to demo response.", err.message);
+      }
+    }
+
+    if (!parsed) {
+      console.warn("⚠️  No AI API key configured — returning mock response for demo.");
       return res.status(200).json({
         ...MOCK_RESPONSE,
         _mock: true,
-        warning: "Demo mode: Gemini returned invalid JSON; showing mock signals.",
+        warning: "Demo mode: add OPENAI_API_KEY or GEMINI_API_KEY to enable real analysis.",
       });
     }
 
@@ -121,20 +170,20 @@ router.post("/analyse", async (req, res) => {
 
     return res.status(200).json(parsed);
   } catch (err) {
-    const message = err?.message || "Unknown Gemini error";
+    const message = err?.message || "Unknown AI error";
     const shouldFallback = /401|403|404|429|5\d\d|incorrect api key|authentication|unauthorized|high demand|temporarily|service unavailable|failed to fetch|network|timeout/i.test(message);
 
     if (shouldFallback) {
-      console.warn("⚠️  Gemini request failed — falling back to mock response for demo.");
+      console.warn("⚠️  AI request failed — falling back to mock response for demo.");
       return res.status(200).json({
         ...MOCK_RESPONSE,
         _mock: true,
-        warning: "Demo mode: Gemini request failed; showing mock signals.",
+        warning: "Demo mode: AI request failed; showing mock signals.",
       });
     }
 
-    console.error("Gemini API error:", message);
-    return res.status(500).json({ error: `Gemini API error: ${message}` });
+    console.error("AI API error:", message);
+    return res.status(500).json({ error: `AI API error: ${message}` });
   }
 });
 
